@@ -82,16 +82,19 @@ def rollout_sim(
     """
     if pi is None and action_fn is None:
         raise ValueError("rollout_sim needs either a policy or an action_fn")
+    assert env.eval_mode, "rollout_sim needs eval_mode: otherwise reset() resamples xi and adds noise"
     dev = env.device
     ids = torch.arange(env.N, device=dev)
     xi_obs = xi if xi_obs is None else xi_obs
     hist_len = pi.hist if pi is not None else 1
+    frames = frames.to(dev)
 
     set_xi(env, xi)
     env.reset(ids, frames)
     env.refresh()
 
     S = env.state()
+    clip_end = motion.clip_end[motion.clip_id[frames]]
     states = [S]
     acts, rews, alives, terms = [], [], [], []
     alive = torch.ones(env.N, dtype=torch.bool, device=dev)
@@ -102,13 +105,17 @@ def rollout_sim(
         a = action_fn(hist, env.f) if action_fn is not None else pi(hist, motion.goal(env.f, goal_frames))
         out = env.step(a)
         S = env.state()
-        term = out["term"] & alive
+        # the reference frame must stay on this clip: past clip_end the reward/termination would
+        # silently read the next clip (or run off the end), which the world-model rollout never does
+        over = env.f > clip_end
+        term = (out["term"] | over) & alive
         alives.append(alive.clone())
         terms.append(term)
         acts.append(a)
         rews.append(out["r"] * alive.to(out["r"].dtype))
         states.append(S)
         alive = alive & ~term
+        env.f = torch.minimum(env.f, clip_end)
     return Rollout(
         S=tuple(torch.stack([s[i] for s in states], 0) for i in range(6)),
         a=torch.stack(acts, 0),
@@ -135,6 +142,7 @@ def rollout_wm(
     if pi is None and action_fn is None:
         raise ValueError("rollout_wm needs either a policy or an action_fn")
     dev = S0[0].device
+    frames = frames.to(dev)
     xi_n = normalize_xi(xi)
     hist_len = pi.hist if pi is not None else 1
     clip_end = motion.clip_end[motion.clip_id[frames]]
@@ -200,14 +208,17 @@ def sensitivity_scan(
     minus = xi_base.clone()
     plus[:, direction_idx] += delta
     minus[:, direction_idx] -= delta
+    frames = frames.to(xi_base.device)
 
     kw = dict(frames=frames, steps=steps, goal_frames=goal_frames)
+    j_sim_base = return_of(rollout_sim(env, pi, mdp, motion, xi=xi_base, **kw), gamma)
     j_sim_p = return_of(rollout_sim(env, pi, mdp, motion, xi=plus, **kw), gamma)
     j_sim_m = return_of(rollout_sim(env, pi, mdp, motion, xi=minus, **kw), gamma)
     j_obs_p = return_of(rollout_sim(env, pi, mdp, motion, xi=xi_base, xi_obs=plus, **kw), gamma)
     j_obs_m = return_of(rollout_sim(env, pi, mdp, motion, xi=xi_base, xi_obs=minus, **kw), gamma)
 
     S0 = tuple(x.clone() for x in motion.ref_state(frames))
+    j_wm_base = return_of(rollout_wm(wm, pi, mdp, motion, S0=S0, xi=xi_base, **kw), gamma)
     j_wm_p = return_of(rollout_wm(wm, pi, mdp, motion, S0=S0, xi=plus, **kw), gamma)
     j_wm_m = return_of(rollout_wm(wm, pi, mdp, motion, S0=S0, xi=minus, **kw), gamma)
 
@@ -215,4 +226,6 @@ def sensitivity_scan(
         "dJ_sim": j_sim_p - j_sim_m,
         "dJ_wm": j_wm_p - j_wm_m,
         "obs_only": j_obs_p - j_obs_m,
+        "J_base_sim": j_sim_base,
+        "J_base_wm": j_wm_base,
     }

@@ -47,6 +47,13 @@ for name, got, want in zip(("p", "R", "v", "w", "q", "qd"), out.S, S1):
     err = (got[1] - want).abs().max().item()
     check(f"one_step_{name}", err < 1e-6, f"max err {err:.2e}")
 
+# the rollouts must use the HARD termination, never the soft one used in imagination
+hard = mdp.termination(S1, frames + 1)
+check("term_is_hard_termination", bool((out.term[0] == hard).all()),
+      f"term={out.term[0].tolist()} hard={hard.tolist()}")
+check("reward_is_analytic", bool(torch.allclose(out.r[0], mdp.reward(S1, frames + 1, torch.zeros(B, 29, device=dev),
+                                                                    torch.zeros(B, 29, device=dev)), atol=1e-6)))
+
 # ---------------------------------------------------------------- shapes and bookkeeping
 out = rollout_wm(wm, None, mdp, motion, S0=S0, xi=xi, frames=frames, steps=4, action_fn=zero_action)
 check("rollout_is_rollout", isinstance(out, Rollout))

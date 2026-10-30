@@ -61,17 +61,27 @@ with launch_simulation(sim_cfg, args):
 
     res = sensitivity_scan(env, wm, pi, mdp, motion, frames=frames, xi_base=xi, direction_idx=0,
                            delta=0.05, steps=8, goal_frames=a_["goal_frames"])
-    for k in ("dJ_sim", "dJ_wm", "obs_only"):
+    for k in ("dJ_sim", "dJ_wm", "obs_only", "J_base_sim", "J_base_wm"):
         check(f"{k}_shape", res[k].shape == (B,), str(res[k].shape))
         check(f"{k}_finite", bool(torch.isfinite(res[k]).all()))
+    check("baseline_positive", bool((res["J_base_sim"] > 0).all()) and bool((res["J_base_wm"] > 0).all()))
 
     # friction must be live: with ground_mu=0.1 the effective mu is xi[:,0], so a 0.05 change
     # has to move the simulated return. A zero here means the ground friction is still pinning it.
     check("friction_direction_is_live", bool((res["dJ_sim"].abs() > 0).any()),
           f"|dJ_sim|={res['dJ_sim'].abs().tolist()}")
 
-    # the observation-only arm must exist as its own channel and be distinct from the whole
-    check("obs_only_distinct", not torch.allclose(res["obs_only"], res["dJ_sim"]), "obs arm identical to full arm")
+    # The observation channel must be validated on a direction it actually carries. mdp.obs
+    # only reads xi[1:30], so a joint offset is live in the observation while friction is not.
+    res_j = sensitivity_scan(env, wm, pi, mdp, motion, frames=frames, xi_base=xi, direction_idx=5,
+                             delta=0.002, steps=8, goal_frames=a_["goal_frames"])
+    check("joint_obs_only_nonzero", bool((res_j["obs_only"].abs() > 0).any()),
+          f"|obs_only|={res_j['obs_only'].abs().tolist()}")
+    check("obs_only_is_a_channel_not_the_whole",
+          bool((res_j["obs_only"].abs() <= res_j["dJ_sim"].abs() + 1e-6).all()),
+          f"obs={res_j['obs_only'].abs().tolist()} full={res_j['dJ_sim'].abs().tolist()}")
+    check("friction_obs_only_is_zero", bool((res["obs_only"] == 0).all()),
+          "mdp.obs never reads xi[0], so the obs-only arm must be exactly zero for friction")
 
 print("\n%d failure(s)" % len(failures))
 sys.exit(1 if failures else 0)

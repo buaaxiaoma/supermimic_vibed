@@ -86,6 +86,18 @@ with launch_simulation(sim_cfg, args):
     check("rollout_reward_finite", bool(torch.isfinite(out.r).all()))
     check("xi_unchanged", torch.allclose(env.xi[:, 0], torch.full((env.N,), 0.6, device=dev)), f"got {env.xi[0, 0]:.3f}")
 
+    # the rollout must start exactly at the reference state: that is the premise for comparing
+    # it with the world-model rollout, which is initialised from motion.ref_state()
+    ref = motion.ref_state(frames)
+    d0 = max((out.S[i][0] - ref[i]).abs().max().item() for i in range(6))
+    check("initial_state_matches_reference", d0 < 1e-5, f"max err {d0:.2e}")
+
+    # and its reward must be the analytic one on the same state (both sides share mdp.reward)
+    S1 = tuple(out.S[i][1] for i in range(6))
+    a0 = out.a[0]
+    check("reward_is_analytic",
+          bool(torch.allclose(out.r[0], mdp.reward(S1, frames + 1, a0, torch.zeros_like(a0)), atol=1e-5)))
+
     # ------------------------------------------------------------ determinism
     out2 = rollout_sim(env, pi=None, mdp=mdp, motion=motion, frames=frames, xi=xi3, steps=8, action_fn=lambda _obs, _f: torch.zeros(env.N, 29, device=dev))
     check("rollout_deterministic", torch.allclose(out.S[0], out2.S[0], atol=1e-6))

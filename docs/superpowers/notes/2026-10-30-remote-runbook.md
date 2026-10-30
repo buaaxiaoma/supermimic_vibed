@@ -38,7 +38,14 @@ docker exec supermimic python supermimic/evaluate.py \
     --run_dir logs/lafan1_main --ckpt logs/lafan1_main/ckpt_014000.pt
 ```
 
-记录 `norm_return`。**判定**：与仓库 README 的 0.829 相差 > 0.05 则停止并报告。
+记录 `norm_return`。**判定改成健康门槛**（不再对标 README 的 0.829，因为版本不同）：
+
+- `wm_loss` 单调下降、`imag_rew` 上升、`surv` 不为 0；
+- eval `norm_return` 明显高于随机水平，`term_frac` 不接近 1；
+- 无 NaN。
+
+本机训出的这个数字就是本文所有对比的分母。论文中须写明 Isaac Lab / newton 的 commit，
+且**不得把 sim 数字与 SuperMimic 论文的 0.82 直接比较**。
 
 ## 4. 仿真侧测试（对应 Task 4、6）
 
@@ -60,17 +67,20 @@ docker exec supermimic python tools/test_analysis_scan.py --num_envs 2 \
 docker exec supermimic python tools/sensitivity.py \
     --ckpt logs/lafan1_main/ckpt_014000.pt \
     --out logs/sensitivity \
-    --steps 32 --delta 0.1 --frames_per_class 8
+    --steps 32 --delta 0.2 --frames_per_class 8
 ```
 
-产出 `logs/sensitivity/{sensitivity.json,sensitivity.csv,summary.json}`。
+`--delta` 是**每个方向自然宽度的比例**（摩擦 0.45、关节零位 0.01 rad、躯干 CoM 0.05 m —— 即
+`normalize_xi` 用的除数），所以 0.2 表示所有方向在 WM 输入空间里移动同样的量。不要给各方向
+设不同的绝对扰动，那会让摩擦方向看起来"不敏感"。
+
+产出 `logs/sensitivity/{sensitivity.json,sensitivity.csv,summary.json}`；
+`summary.json` 含 `J_base_sim` / `J_base_wm` 与每个方向的 `rel_dJ_sim` / `rel_dJ_wm`。
 
 判定（写入 `docs/superpowers/notes/2026-10-30-go-no-go.md`）：
 
-- 至少 2 个方向满足 `|dJ_sim| > 5%·J_base` 且 `|dJ_wm| < 1%·J_base` → **GO**
+- 至少 2 个方向满足 `rel_dJ_sim > 0.05` 且 `rel_dJ_wm < 0.01` → **GO**
 - 否则 → **NO-GO**，按 spec §6 第三行换靶心
-
-`J_base` 用 `--steps 32` 下的平均收益，可从汇总里取。
 
 ## 6. 已知的本地/远程差异
 
