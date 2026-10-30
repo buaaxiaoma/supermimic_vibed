@@ -60,6 +60,7 @@ def _discounted_return(r: torch.Tensor, alive: torch.Tensor, gamma: float) -> to
     return (r * (gamma ** torch.arange(r.shape[0], device=r.device, dtype=r.dtype).unsqueeze(-1))).sum(0)
 
 
+@torch.no_grad()
 def rollout_sim(
     env: "TrackingSim",
     pi: Optional["Policy"],
@@ -125,6 +126,7 @@ def rollout_sim(
     )
 
 
+@torch.no_grad()
 def rollout_wm(
     wm: "WorldModel",
     pi: Optional["Policy"],

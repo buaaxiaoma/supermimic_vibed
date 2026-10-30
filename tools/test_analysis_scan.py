@@ -77,9 +77,11 @@ with launch_simulation(sim_cfg, args):
                              delta=0.002, steps=8, goal_frames=a_["goal_frames"])
     check("joint_obs_only_nonzero", bool((res_j["obs_only"].abs() > 0).any()),
           f"|obs_only|={res_j['obs_only'].abs().tolist()}")
-    check("obs_only_is_a_channel_not_the_whole",
-          bool((res_j["obs_only"].abs() <= res_j["dJ_sim"].abs() + 1e-6).all()),
-          f"obs={res_j['obs_only'].abs().tolist()} full={res_j['dJ_sim'].abs().tolist()}")
+    # No ordering is implied between the two arms: both are differences of a nonlinear return,
+    # so the observation-only change can be larger or smaller than the full one.
+    check("obs_only_is_distinct_from_full",
+          not torch.allclose(res_j["obs_only"], res_j["dJ_sim"], atol=1e-9),
+          "the observation channel must not be a copy of the full effect")
     check("friction_obs_only_is_zero", bool((res["obs_only"] == 0).all()),
           "mdp.obs never reads xi[0], so the obs-only arm must be exactly zero for friction")
 
