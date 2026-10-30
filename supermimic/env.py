@@ -47,7 +47,7 @@ class TrackingSim:
     """
 
     def __init__(self, sim_cfg, num_envs: int, motion: MotionLib, mdp: MDP, gamma: float = 0.99, eval_mode: bool = False,
-                 max_episode_steps: int = 500, reset_noise: bool = True):
+                 max_episode_steps: int = 500, reset_noise: bool = True, ground_mu: float | None = None):
         self.device = sim_cfg.device
         self.sim = SimulationContext(sim_cfg)
         self.scene = instantiate(TrackingSceneCfg(num_envs=num_envs, env_spacing=0.0, replicate_physics=True))
@@ -63,6 +63,9 @@ class TrackingSim:
         self.default_q = self.robot.data.default_joint_pos.torch[0].clone()
         self.alpha = torch.tensor([action_scale(n) for n in G1_JOINT_NAMES], device=dev)
         self.torso_id = self.robot.find_bodies("torso_link")[0][0]
+        # torso CoM before any offset is applied, so that xi[:, 30:33] can be re-applied at runtime
+        self.default_torso_com = self.robot.data.body_com_pose_b.torch[:, self.torso_id, :3].clone()
+        self.ground_mu = ground_mu  # None keeps the original 0.3 (train) / 1.0 (eval) ground friction
 
         # ---- sim context xi = [friction, joint offsets(29), torso com offset(3)] ----
         self.xi = torch.zeros(self.N, 33, device=dev)
@@ -80,8 +83,7 @@ class TrackingSim:
                 -1,
             )
             self.xi[:, 30:33] = com
-            default_com = self.robot.data.body_com_pose_b.torch[:, self.torso_id, :3].clone()
-            self.robot.set_coms_index(coms=(default_com + com).unsqueeze(1), body_ids=[self.torso_id])
+            self.robot.set_coms_index(coms=(self.default_torso_com + com).unsqueeze(1), body_ids=[self.torso_id])
         self._apply_friction()
 
         # ---- episode bookkeeping ----
@@ -106,7 +108,7 @@ class TrackingSim:
         # ground shapes (body == -1): lowest friction of the range, since MuJoCo takes the max of a pair
         shape_body = wp.to_torch(model.shape_body)
         mu_all = wp.to_torch(model.shape_material_mu)
-        mu_all[shape_body < 0] = 0.3 if not self.eval_mode else 1.0
+        mu_all[shape_body < 0] = self.ground_mu if self.ground_mu is not None else (0.3 if not self.eval_mode else 1.0)
 
     def _apply_friction(self):
         self._mu_view[:] = self.xi[:, :1]

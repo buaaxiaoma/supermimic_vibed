@@ -16,3 +16,5 @@ logs/
 results/analysis/
 # third-party paper
 *.pdf
+# raw huggingface download staging
+data_raw/
